@@ -10,19 +10,23 @@ from datetime import timedelta
 def generar_pronostico(parquet_path: str, h: int = 7) -> dict:
     print("Cargando datos preparados...")
     lf = pl.scan_parquet(parquet_path)
-    max_date_str = lf.select(pl.col("ds").max()).collect().item()
-    if max_date_str:
-        max_date = pd.to_datetime(max_date_str)
-        fecha_corte = max_date - pd.Timedelta(days=365)
-        fecha_corte_str = fecha_corte.strftime('%Y-%m-%d') 
-        lf = lf.filter(pl.col("ds") >= fecha_corte_str)
-        print(f"Filtrando historico desde {fecha_corte_str} hasta {max_date_str}")
     df_polars = lf.collect()
     df = df_polars.to_pandas()
+    
     del lf
     del df_polars
     gc.collect()
     df['ds'] = pd.to_datetime(df['ds'])
+    df = df.dropna(subset=['ds'])
+    max_date = df['ds'].max()
+    if pd.notnull(max_date):
+        fecha_corte = max_date - pd.Timedelta(days=365)
+        df = df[df['ds'] >= fecha_corte].copy()
+        print(f"Filtrando historico desde {fecha_corte.date()} hasta {max_date.date()}")
+        
+    if df.empty:
+        raise ValueError("El dataset quedo vacio despues de procesar las fechas. Revisa el formato de fecha del CSV.")
+    df = df.drop_duplicates(subset=['unique_id', 'ds'])
     df = df.sort_values(by=['unique_id', 'ds']).reset_index(drop=True)
     
     id_ejemplo = df['unique_id'].value_counts().idxmax()

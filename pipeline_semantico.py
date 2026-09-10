@@ -79,13 +79,15 @@ def transformar_datos(df_raw: pl.LazyFrame, mapeo: ResultadoMapeo) -> pl.LazyFra
     df_clean = df_clean.with_columns([
         pl.col("y").cast(pl.Float64)
     ])
-
-    group_cols = ["unique_id", "ds"] + [c for c in covariates_cat if c in df_clean.columns]
+    group_cols = ["unique_id", "ds"]
     
     agg_exprs = [pl.col("y").sum()]
     for c in covariates_num:
         if c in df_clean.columns:
             agg_exprs.append(pl.col(c).max())
+    for c in covariates_cat:
+        if c in df_clean.columns:
+            agg_exprs.append(pl.col(c).first())
 
     df_agg = df_clean.group_by(group_cols).agg(agg_exprs)
 
