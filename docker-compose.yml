@@ -1,0 +1,12 @@
+version: "3.8"
+
+services:
+  demand-forecasting-api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434/v1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
