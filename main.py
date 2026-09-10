@@ -1,4 +1,5 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 import shutil
 import os
 from tempfile import NamedTemporaryFile
@@ -9,6 +10,14 @@ app = FastAPI(
     title="Demand Forecasting API",
     description="API RESTful para prevision de demanda con Ollama y MLForecast.",
     version="1.0.0"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], # En producción cambiar esto por la URL de React
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 @app.post("/predict-demand/")
