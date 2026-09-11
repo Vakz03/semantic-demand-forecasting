@@ -26,12 +26,20 @@ class ColumnaMapeada(BaseModel):
 class ResultadoMapeo(BaseModel):
     columnas: List[ColumnaMapeada]
 
+def sanitizar_texto(texto: str, max_len: int = 50) -> str:
+    if not isinstance(texto, str):
+        texto = str(texto)
+    limpio = "".join(ch for ch in texto if ch.isprintable() and ch not in "\r\n\t`'\"")
+    return limpio[:max_len]
+
 def extraer_perfil(df: pl.DataFrame) -> str:
     perfil = []
     for col in df.columns:
+        col_sanitizada = sanitizar_texto(col, max_len=60)
         tipo = str(df.schema[col])
-        ejemplos = df[col].drop_nulls().head(5).to_list()
-        perfil.append(f"Columna: '{col}' | Tipo nativo: {tipo} | Ejemplos: {ejemplos}")
+        valores_raw = df[col].drop_nulls().head(5).to_list()
+        ejemplos = [sanitizar_texto(v, max_len=35) for v in valores_raw]
+        perfil.append(f"Columna: '{col_sanitizada}' | Tipo nativo: {tipo} | Ejemplos: {ejemplos}")
     return "\n".join(perfil)
 
 def transformar_datos(df_raw: pl.LazyFrame, mapeo: ResultadoMapeo) -> pl.LazyFrame:
