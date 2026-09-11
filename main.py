@@ -6,7 +6,8 @@ from tempfile import NamedTemporaryFile
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Request, Security, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
-from slowapi import Limiter, _rate_limit_exceeded_handler
+from fastapi.responses import JSONResponse
+from slowapi import Limiter
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
@@ -23,9 +24,15 @@ IS_PRODUCTION = os.getenv("ENVIRONMENT", "development").lower() == "production"
 
 limiter = Limiter(key_func=get_remote_address)
 
+def custom_rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        content={"detail": "Demasiadas solicitudes. Por favor intente más tarde."}
+    )
+
 app = FastAPI(
     title="Demand Forecasting API",
-    description="API RESTful endurecida para prevision de demanda con Ollama y MLForecast.",
+    description="API RESTful para previsión de demanda.",
     version="1.1.0",
     docs_url=None if IS_PRODUCTION else "/docs",
     redoc_url=None if IS_PRODUCTION else "/redoc",
@@ -33,7 +40,7 @@ app = FastAPI(
 )
 
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_exception_handler(RateLimitExceeded, custom_rate_limit_handler)
 allowed_origins_env = os.getenv("ALLOWED_ORIGINS")
 if allowed_origins_env:
     origins = [o.strip() for o in allowed_origins_env.split(",") if o.strip()]
@@ -71,7 +78,7 @@ def health_check():
 def predict_demand(
     request: Request,
     file: UploadFile = File(...),
-    h: int = Query(7, ge=1, le=90, description="Horizonte de pronostico (entre 1 y 90 periodos)"),
+    h: int = Query(7, ge=1, le=90, description="Horizonte de pronóstico"),
     api_key: str = Security(verify_api_key)
 ):
     if not file.filename or not file.filename.lower().endswith('.csv'):
@@ -101,7 +108,7 @@ def predict_demand(
                 if total_bytes_read > MAX_UPLOAD_SIZE_BYTES:
                     raise HTTPException(
                         status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                        detail="El archivo excede el tamaño máximo permitido de 50 MB."
+                        detail="El archivo excede el tamaño máximo permitido."
                     )
                 temp_csv.write(chunk)
 

@@ -44,31 +44,16 @@ You can access the interactive Swagger UI at:
 **[http://localhost:8000/docs](http://localhost:8000/docs)**
 
 ### `POST /predict-demand/`
-- **Payload**: A raw `.csv` file (max 50 MB).
-- **Parameters**: `h` (int, 1-90) - The number of steps/days to forecast into the future.
-- **Headers**: `X-API-Key` *(optional, required if `API_KEY` is configured in environment)*.
+- **Payload**: A structured `.csv` file.
+- **Parameters**: `h` (int, optional) - The number of steps/days to forecast into the future.
+- **Headers**: `X-API-Key` *(optional, if authentication is configured)*.
 - **Response**: A JSON dictionary containing:
-  - `pronostico`: Forecasted values columnar dictionary:
-    - `unique_id`: Series identifier.
-    - `ds`: Target timestamp.
-    - `LGBMRegressor`: Expected forecast.
-    - `p10`: Lower confidence interval bound (conservative worst-case, truncated at $\ge 0$).
-    - `p90`: Upper confidence interval bound (optimistic high-demand case).
+  - `pronostico`: Forecasted demand values per `unique_id` and `ds` with uncertainty bounds (`p10`, `p90`).
   - `catalogo`: Extracted static product metadata (descriptions, categories).
-  - `anomalias`: Historical out-of-distribution sales events flagged using weekday residual deviation ($|y - \hat{y}| > 3.5\sigma$).
+  - `anomalias`: Historical out-of-distribution sales events flagged using weekday residual deviation.
 
-## Security & Defense (Enterprise API Standards)
+## Enterprise Reliability & Security
 
-This service includes enterprise-grade defensive mitigations:
-1. **Resource Limitation & Anti-DoS (Resource Limitation):** 
-   - Strict 50 MB chunked upload streaming (rejects with `413 Payload Too Large`).
-   - Query parameter validation `h` strictly bound between 1 and 90 (`422 Unprocessable Entity`).
-   - Built-in Rate Limiting via `SlowAPI` (10 requests/minute per client, `429 Too Many Requests`).
-   - Concurrency Semaphore (max 2 parallel training workloads) to protect host CPU and RAM against OOM.
-2. **Access Control (Access Control):** Optional `X-API-Key` authentication enforced when `API_KEY` is set.
-3. **Information Disclosure Prevention (CWE-209):** Internal stack traces and temporary paths are masked; client receives safe generic error messages while full traces are preserved in server logs.
-4. **Prompt Injection Mitigation (Prompt Sanitization):** Column headers and cell values are sanitized and length-capped before passing to Ollama.
-5. **Container Security:** Runs under an unprivileged user (`appuser`, UID 1001), avoiding root execution.
-6. **Supply Chain Security:** All dependencies pinned with strict versions in `requirements.txt`.
+The service is built following modern enterprise standards, featuring input validation, rate limiting, access control mechanisms, and containerized deployment designed to protect system resources and ensure consistent operation in production environments.
 
 
