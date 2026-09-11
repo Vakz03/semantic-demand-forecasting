@@ -7,7 +7,7 @@ import pandas as pd
 import gc
 from datetime import timedelta
 
-def generar_pronostico(parquet_path: str, h: int = 7) -> dict:
+def generar_pronostico(parquet_path: str, h: int = 7, lead_time: int = 0) -> dict:
     print("Cargando datos preparados...")
     lf = pl.scan_parquet(parquet_path)
     df_polars = lf.collect()
@@ -90,20 +90,46 @@ def generar_pronostico(parquet_path: str, h: int = 7) -> dict:
         date_features = ['hour', 'dayofweek', 'day']
     else:
         date_features = ['dayofweek', 'day', 'month']
-        
-    model = MLForecast(
-        models=[LGBMRegressor(random_state=42, verbosity=-1, n_jobs=6)],
-        freq=freq_inferida,
-        lags=lags_dinamicos,
-        date_features=date_features
-    )
     min_points_req = max(lags_dinamicos) + 2
     series_counts = df['unique_id'].value_counts()
     series_maduras = series_counts[series_counts >= min_points_req].index
     series_cortas = series_counts[series_counts < min_points_req].index
     
     df_fit = df[df['unique_id'].isin(series_maduras)].copy() if len(series_cortas) > 0 and len(series_maduras) > 0 else df
+    n_filas = len(df_fit)
+    n_series = df_fit['unique_id'].nunique()
     
+    if n_filas < 10000 or n_series < 50:
+        n_est = 80
+        lr = 0.05
+        min_child = 5
+        num_leaves = 15
+    elif n_filas < 200000:
+        n_est = 120
+        lr = 0.08
+        min_child = 15
+        num_leaves = 31
+    else:
+        n_est = 150
+        lr = 0.10
+        min_child = 30
+        num_leaves = 63
+
+    model = MLForecast(
+        models=[LGBMRegressor(
+            n_estimators=n_est,
+            learning_rate=lr,
+            min_child_samples=min_child,
+            num_leaves=num_leaves,
+            random_state=42,
+            verbosity=-1,
+            n_jobs=6
+        )],
+        freq=freq_inferida,
+        lags=lags_dinamicos,
+        date_features=date_features
+    )
+
     model.fit(
         df_fit,
         id_col='unique_id',
@@ -116,6 +142,7 @@ def generar_pronostico(parquet_path: str, h: int = 7) -> dict:
     
     if 'LGBMRegressor' in pronostico.columns:
         pronostico['LGBMRegressor'] = pronostico['LGBMRegressor'].clip(lower=0)
+    ceros_por_serie = df.groupby('unique_id')['y'].apply(lambda s: (s == 0).mean()).to_dict()
     if len(series_cortas) > 0 and len(series_maduras) > 0:
         df_cortas = df[df['unique_id'].isin(series_cortas)]
         fechas_futuras = sorted(pronostico['ds'].unique())
@@ -135,11 +162,36 @@ def generar_pronostico(parquet_path: str, h: int = 7) -> dict:
     df['dow'] = df['ds'].dt.dayofweek
     dow_means = df.groupby(['unique_id', 'dow'])['y'].transform('mean')
     residuos = df['y'] - dow_means
+    cuantil_bajo_global = float(residuos.quantile(0.10))
+    cuantil_alto_global = float(residuos.quantile(0.90))
+    
+    q10_por_serie = residuos.groupby(df['unique_id'].astype(str)).quantile(0.10).fillna(cuantil_bajo_global).to_dict()
+    q90_por_serie = residuos.groupby(df['unique_id'].astype(str)).quantile(0.90).fillna(cuantil_alto_global).to_dict()
     std_por_serie = residuos.groupby(df['unique_id'].astype(str)).std().fillna(1.0).to_dict()
     std_por_fila = df['unique_id'].astype(str).map(std_por_serie).fillna(1.0)
-    dispersion_futura = pronostico['unique_id'].astype(str).map(std_por_serie).fillna(1.0)
-    pronostico['p10'] = (pronostico['LGBMRegressor'] - 1.28 * dispersion_futura).clip(lower=0).round(2)
-    pronostico['p90'] = (pronostico['LGBMRegressor'] + 1.28 * dispersion_futura).clip(lower=0).round(2)
+    q10_futuro = pronostico['unique_id'].astype(str).map(q10_por_serie).fillna(cuantil_bajo_global)
+    q90_futuro = pronostico['unique_id'].astype(str).map(q90_por_serie).fillna(cuantil_alto_global)
+    
+    pronostico['p10'] = (pronostico['LGBMRegressor'] + q10_futuro).clip(lower=0).round(2)
+    pronostico['p90'] = (pronostico['LGBMRegressor'] + q90_futuro).clip(lower=0).round(2)
+    pronostico['p10'] = pronostico[['p10', 'LGBMRegressor']].min(axis=1)
+    pronostico['p90'] = pronostico[['p90', 'LGBMRegressor']].max(axis=1)
+    es_intermitente = pronostico['unique_id'].map(ceros_por_serie).fillna(0.0) > 0.65
+    pronostico.loc[es_intermitente, 'p10'] = 0.0
+    metricas_inventario = {}
+    if lead_time > 0:
+        factor_servicio_z = 1.645
+        promedios_pred = pronostico.groupby('unique_id')['LGBMRegressor'].mean().to_dict()
+        for uid, media_d in promedios_pred.items():
+            sigma_diaria = std_por_serie.get(str(uid), 1.0)
+            ss = round(factor_servicio_z * sigma_diaria * (lead_time ** 0.5), 2)
+            rop = round((media_d * lead_time) + ss, 2)
+            metricas_inventario[str(uid)] = {
+                "lead_time_dias": lead_time,
+                "consumo_diario_estimado": round(float(media_d), 2),
+                "stock_seguridad_sugerido": max(0.0, float(ss)),
+                "punto_reorden_sugerido": max(0.0, float(rop))
+            }
     anomalias_mask = (residuos.abs() > 3.5 * std_por_fila) & (residuos.abs() > 3.0)
     df_anomalias = df[anomalias_mask][['unique_id', 'ds', 'y']].copy()
     df_anomalias['y_esperado'] = dow_means[anomalias_mask].round(2)
@@ -153,8 +205,13 @@ def generar_pronostico(parquet_path: str, h: int = 7) -> dict:
     
     pronostico['ds'] = pronostico['ds'].astype(str)
     
-    return {
+    salida = {
         "pronostico": pronostico.to_dict(orient='list'),
         "catalogo": catalogo,
         "anomalias": anomalias_lista
     }
+    if metricas_inventario:
+        salida["metricas_inventario"] = metricas_inventario
+        
+    return salida
+

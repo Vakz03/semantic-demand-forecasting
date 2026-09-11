@@ -116,59 +116,81 @@ def transformar_datos(df_raw: pl.LazyFrame, mapeo: ResultadoMapeo) -> pl.LazyFra
     df_final = df_agg.sort(["unique_id", "ds"])
     return df_final
 
-def procesar_csv_a_parquet(file_path: str) -> str:
-    print("Cargando datos con Polars (Lazy API)...")
+import hashlib
+
+_SCHEMA_MAPPING_CACHE = {}
+
+def calcular_hash_esquema(df: pl.DataFrame) -> str:
+    firma = "|".join(f"{col}:{df.schema[col]}" for col in sorted(df.columns))
+    return hashlib.sha256(firma.encode("utf-8")).hexdigest()
+
+def procesar_archivo_a_parquet(file_path: str) -> str:
+    es_parquet = file_path.lower().endswith(".parquet")
+    print(f"Cargando datos con Polars (Lazy API) desde {'Parquet' if es_parquet else 'CSV'}...")
+    
     try:
-        lf = pl.scan_csv(file_path, infer_schema_length=0, ignore_errors=True)
+        if es_parquet:
+            lf = pl.scan_parquet(file_path)
+            columnas_existentes = set(lf.collect_schema().names())
+            if {"unique_id", "ds", "y"}.issubset(columnas_existentes):
+                print("El archivo Parquet ya contiene las columnas estandar ('unique_id', 'ds', 'y'). Pasando directo.")
+                return file_path
+        else:
+            lf = pl.scan_csv(file_path, infer_schema_length=0, ignore_errors=True)
     except FileNotFoundError:
         print(f"Error: No se encontro el archivo '{file_path}'.")
         raise
 
     df_muestra = lf.head(10000).collect()
-    perfil_texto = extraer_perfil(df_muestra)
-    print("\n--- Perfil Extraido ---")
-    print(perfil_texto)
-    print("-----------------------\n")
-    
+    firma_esquema = calcular_hash_esquema(df_muestra)
+    if firma_esquema in _SCHEMA_MAPPING_CACHE:
+        print("Esquema reconocido en cache semantica. Reutilizando mapeo previo sin consultar al LLM.")
+        respuesta = _SCHEMA_MAPPING_CACHE[firma_esquema]
+    else:
+        perfil_texto = extraer_perfil(df_muestra)
+        print("\n--- Perfil Extraido ---")
+        print(perfil_texto)
+        print("-----------------------\n")
+        
+        modelo_local = "qwen2.5" 
+        ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+        
+        cliente = instructor.from_openai(
+            OpenAI(
+                base_url=ollama_base_url,
+                api_key="ollama-local"
+            ),
+            mode=instructor.Mode.JSON
+        )
+
+        prompt = f"""
+        Actua como un ingeniero de datos analizando una nueva base de datos de retail/negocios.
+        Tu objetivo es clasificar cada columna para preparar los datos para un algoritmo de prevision de demanda.
+        
+        REGLAS CRITICAS:
+        1. TARGET_METRIC debe ser siempre una columna numerica (Int o Float) que represente volumen de VENTAS o DEMANDA. 
+        2. NUNCA clasifiques precios, descuentos, costos o margenes como TARGET_METRIC. Si la columna es monetaria o de precio, clasificala como COVARIATE.
+        3. Si la columna contiene texto (String) como nombres de categorias, clasificala como COVARIATE.
+        4. DEBES asignar exactamente UNA columna como TIMESTAMP y exactamente UNA columna como TARGET_METRIC.
+        
+        Analiza la siguiente metadata de la tabla:
+        {perfil_texto}
+        
+        Clasifica estrictamente cada columna segun la ontologia definida.
+        """
+
+        print(f"Consultando al modelo {modelo_local}...")
+        
+        respuesta = cliente.chat.completions.create(
+            model=modelo_local,
+            response_model=ResultadoMapeo,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.1
+        )
+        _SCHEMA_MAPPING_CACHE[firma_esquema] = respuesta
+
     del df_muestra
     gc.collect()
-
-    modelo_local = "qwen2.5" 
-    
-    ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
-    
-    cliente = instructor.from_openai(
-        OpenAI(
-            base_url=ollama_base_url,
-            api_key="ollama-local"
-        ),
-        mode=instructor.Mode.JSON
-    )
-
-    prompt = f"""
-    Actua como un ingeniero de datos analizando una nueva base de datos de retail/negocios.
-    Tu objetivo es clasificar cada columna para preparar los datos para un algoritmo de prevision de demanda.
-    
-    REGLAS CRITICAS:
-    1. TARGET_METRIC debe ser siempre una columna numerica (Int o Float) que represente volumen de VENTAS o DEMANDA. 
-    2. NUNCA clasifiques precios, descuentos, costos o margenes como TARGET_METRIC. Si la columna es monetaria o de precio, clasificala como COVARIATE.
-    3. Si la columna contiene texto (String) como nombres de categorias, clasificala como COVARIATE.
-    4. DEBES asignar exactamente UNA columna como TIMESTAMP y exactamente UNA columna como TARGET_METRIC.
-    
-    Analiza la siguiente metadata de la tabla:
-    {perfil_texto}
-    
-    Clasifica estrictamente cada columna segun la ontologia definida.
-    """
-
-    print(f"Consultando al modelo {modelo_local}...")
-    
-    respuesta = cliente.chat.completions.create(
-        model=modelo_local,
-        response_model=ResultadoMapeo,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.1
-    )
 
     print("\n--- Resultados del Schema Matching ---")
     for col in respuesta.columnas:
@@ -181,8 +203,15 @@ def procesar_csv_a_parquet(file_path: str) -> str:
     lf_transformado = transformar_datos(lf, respuesta)
     
     print("Ejecutando pipeline y guardando a disco (esto puede tomar un momento)...")
-    out_path = file_path.replace(".csv", ".parquet")
+    out_path = file_path if es_parquet else file_path.replace(".csv", ".parquet")
+    if es_parquet and out_path == file_path:
+        out_path = file_path.replace(".parquet", "_preparado.parquet")
+        
     lf_transformado.collect(streaming=True).write_parquet(out_path)
     print(f"Datos transformados y guardados en '{out_path}' exitosamente.")
     
     return out_path
+
+def procesar_csv_a_parquet(file_path: str) -> str:
+    return procesar_archivo_a_parquet(file_path)
+
