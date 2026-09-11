@@ -42,26 +42,63 @@ docker-compose up --build -d
 
 This will expose the API locally on port `8000`.
 
-## API Usage
+## Configuration (Environment Variables)
 
-You can access the interactive Swagger UI at:
-**[http://localhost:8000/docs](http://localhost:8000/docs)**
+The service can be configured via environment variables in `docker-compose.yml` or a `.env` file:
 
-### `POST /predict-demand/`
-- **Payload**: A structured `.csv` or `.parquet` file.
-- **Parameters**:
-  - `h` (int, optional, default: 7): Number of horizon steps to forecast into the future.
-  - `lead_time` (int, optional, default: 0): Supplier lead time in days to calculate safety stock and reorder point.
-- **Headers**: `X-API-Key` *(optional, if authentication is configured)*.
-- **Response**: A JSON dictionary containing:
-  - `pronostico`: Forecasted demand values per `unique_id` and `ds` with uncertainty bounds (`p10`, `p90`).
-  - `catalogo`: Extracted static product metadata (descriptions, categories).
-  - `anomalias`: Historical out-of-distribution sales events flagged using weekday residual deviation.
-  - `metricas_inventario` *(optional, when lead_time > 0)*: Suggested safety stock and reorder point per series.
+| Variable | Default Value | Description |
+| :--- | :--- | :--- |
+| `ENVIRONMENT` | `development` | Operating environment. When set to `production`, interactive documentation (`/docs`, `/redoc`, `/openapi.json`) is automatically disabled. |
+| `OLLAMA_BASE_URL` | `http://localhost:11434/v1` | Base URL pointing to the Ollama server hosting the local LLM. |
+| `API_KEY` | *(empty)* | Optional secret key for endpoint protection. When specified, requests must supply this key via the `X-API-Key` header. |
+| `ALLOWED_ORIGINS` | *(local addresses)* | Comma-separated list of allowed CORS origins for web integrations (e.g., `http://localhost:5173,http://localhost:3000`). |
+
+## API Usage & Documentation
+
+### Interactive Documentation
+
+The API exposes interactive API documentation interfaces in development mode:
+
+- **Swagger UI**: [http://localhost:8000/docs](http://localhost:8000/docs)
+- **ReDoc Alternative**: [http://localhost:8000/redoc](http://localhost:8000/redoc)
+- **OpenAPI Schema**: [http://localhost:8000/openapi.json](http://localhost:8000/openapi.json)
+
+In `production` mode (`ENVIRONMENT=production`), these documentation endpoints are completely disabled to prevent unintended schema exposure.
+
+### Endpoints
+
+#### `GET /health`
+Verifies service availability and container health status.
+- **Response**: `{"status": "healthy", "service": "demand-forecasting-api"}`
+
+#### `POST /predict-demand/`
+Executes end-to-end dataset profiling, ETL processing, and machine learning demand forecasting.
+
+- **Payload**: A structured `.csv` or `.parquet` file (`multipart/form-data`).
+- **Query Parameters**:
+  - `h` (int, optional, default: `7`, range: `1` to `90`): Number of time steps to forecast into the future.
+  - `lead_time` (int, optional, default: `0`, range: `0` to `180`): Supplier lead time in days for inventory safety stock and reorder point calculation.
+- **Headers**:
+  - `X-API-Key` *(optional, required only if `API_KEY` is configured on the server)*.
+- **Response Format**:
+  - `pronostico`: Forecasted demand per `unique_id` and timestamp `ds` with conformal uncertainty bands (`p10`, `p90`).
+  - `catalogo`: Extracted static product and location metadata (categories, descriptions).
+  - `anomalias`: Historical out-of-distribution sales records flagged by residual deviation analysis.
+  - `metricas_inventario` *(optional, calculated when `lead_time > 0`)*: Suggested safety stock, daily consumption average, and reorder point (ROP) per series.
 
 ## Enterprise Reliability & Security
 
-The service is built following modern enterprise standards, featuring input validation, rate limiting, access control mechanisms, and containerized deployment designed to protect system resources and ensure consistent operation in production environments.
+The service is built following modern enterprise standards, featuring:
+- Non-root container execution (`appuser` UID 1001).
+- Request rate limiting via SlowAPI.
+- Streaming file upload size validation (50 MB limit) with protection against memory exhaustion.
+- Bounded concurrency semaphore limiting simultaneous model training tasks.
+- Sanitized input handling and generic client-side error responses to prevent stack trace disclosure.
+
+## License & Legal Policies
+
+- **License**: Released under the terms of the **MIT License**. See [LICENSE](LICENSE) for details.
+- **Disclaimer**: Use of algorithmic forecasts is subject to the conditions detailed in [DISCLAIMER.md](DISCLAIMER.md).
 
 
 
