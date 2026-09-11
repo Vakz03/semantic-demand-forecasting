@@ -92,19 +92,39 @@ Open your browser at **`http://localhost:5173`**.
 - **Parameters:**
   - `file`: CSV file containing historical sales records.
   - `h` *(optional, default: 7)*: Number of forecast horizons.
+- **Headers:** `X-API-Key` *(optional, if configured)*.
 - **Response Format:**
   ```json
   {
     "pronostico": {
-      "unique_id": ["001_000001", ...],
-      "ds": ["2023-12-29", ...],
-      "LGBMRegressor": [14.2, ...]
+      "unique_id": ["001_000001", "..."],
+      "ds": ["2023-12-29", "..."],
+      "LGBMRegressor": [14.2, "..."],
+      "p10": [10.5, "..."],
+      "p90": [18.1, "..."]
     },
     "catalogo": [
       {
         "unique_id": "001_000001",
         "DES_PROD": "ACEITE 1-2-3 LITRO"
       }
+    ],
+    "anomalias": [
+      {
+        "unique_id": "001_000001",
+        "ds": "2023-11-15",
+        "venta_real": 95.0,
+        "media_esperada": 12.4,
+        "std": 4.1,
+        "z_score": 20.14
+      }
     ]
   }
   ```
+
+---
+
+## Enterprise Reliability & Security
+
+The service is built following modern enterprise standards, featuring input validation, rate limiting, access control mechanisms, and containerized deployment designed to protect system resources and ensure consistent operation in production environments.
+

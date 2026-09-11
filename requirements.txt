@@ -1,13 +1,15 @@
-fastapi
-uvicorn
-python-multipart
-polars
-pyarrow
-pandas
-pydantic
-instructor
-openai
-mlforecast
-lightgbm
-utilsforecast
+fastapi==0.141.1
+uvicorn==0.52.4
+python-multipart==0.0.32
+slowapi==0.1.9
+polars==1.44.2
+pyarrow==25.0.1
+pandas==2.3.3
+pydantic==2.13.5
+instructor==1.17.0
+openai==3.3.0
+mlforecast==1.1.0
+lightgbm==4.7.0
+utilsforecast==0.2.16
+
 
