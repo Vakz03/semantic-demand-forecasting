@@ -86,15 +86,26 @@ def generar_pronostico(parquet_path: str, h: int = 7) -> dict:
     for col in covariables_estaticas:
         if df[col].dtype == 'object' or df[col].dtype.name == 'string':
             df[col] = df[col].astype('category')
-    
+    if freq_inferida.startswith('H'):
+        date_features = ['hour', 'dayofweek', 'day']
+    else:
+        date_features = ['dayofweek', 'day', 'month']
+        
     model = MLForecast(
         models=[LGBMRegressor(random_state=42, verbosity=-1, n_jobs=6)],
         freq=freq_inferida,
         lags=lags_dinamicos,
+        date_features=date_features
     )
+    min_points_req = max(lags_dinamicos) + 2
+    series_counts = df['unique_id'].value_counts()
+    series_maduras = series_counts[series_counts >= min_points_req].index
+    series_cortas = series_counts[series_counts < min_points_req].index
+    
+    df_fit = df[df['unique_id'].isin(series_maduras)].copy() if len(series_cortas) > 0 and len(series_maduras) > 0 else df
     
     model.fit(
-        df,
+        df_fit,
         id_col='unique_id',
         time_col='ds',
         target_col='y',
@@ -105,6 +116,36 @@ def generar_pronostico(parquet_path: str, h: int = 7) -> dict:
     
     if 'LGBMRegressor' in pronostico.columns:
         pronostico['LGBMRegressor'] = pronostico['LGBMRegressor'].clip(lower=0)
+    if len(series_cortas) > 0 and len(series_maduras) > 0:
+        df_cortas = df[df['unique_id'].isin(series_cortas)]
+        fechas_futuras = sorted(pronostico['ds'].unique())
+        filas_cortas = []
+        for uid in series_cortas:
+            sub = df_cortas[df_cortas['unique_id'] == uid]
+            media_reciente = max(0.0, float(sub['y'].tail(7).mean()))
+            for f in fechas_futuras:
+                filas_cortas.append({
+                    'unique_id': uid,
+                    'ds': f,
+                    'LGBMRegressor': round(media_reciente, 2)
+                })
+        if filas_cortas:
+            df_pronostico_cortas = pd.DataFrame(filas_cortas)
+            pronostico = pd.concat([pronostico, df_pronostico_cortas], ignore_index=True)
+    df['dow'] = df['ds'].dt.dayofweek
+    dow_means = df.groupby(['unique_id', 'dow'])['y'].transform('mean')
+    residuos = df['y'] - dow_means
+    std_por_serie = residuos.groupby(df['unique_id'].astype(str)).std().fillna(1.0).to_dict()
+    std_por_fila = df['unique_id'].astype(str).map(std_por_serie).fillna(1.0)
+    dispersion_futura = pronostico['unique_id'].astype(str).map(std_por_serie).fillna(1.0)
+    pronostico['p10'] = (pronostico['LGBMRegressor'] - 1.28 * dispersion_futura).clip(lower=0).round(2)
+    pronostico['p90'] = (pronostico['LGBMRegressor'] + 1.28 * dispersion_futura).clip(lower=0).round(2)
+    anomalias_mask = (residuos.abs() > 3.5 * std_por_fila) & (residuos.abs() > 3.0)
+    df_anomalias = df[anomalias_mask][['unique_id', 'ds', 'y']].copy()
+    df_anomalias['y_esperado'] = dow_means[anomalias_mask].round(2)
+    df_anomalias['desviacion'] = (df_anomalias['y'] - df_anomalias['y_esperado']).round(2)
+    df_anomalias['ds'] = df_anomalias['ds'].astype(str)
+    anomalias_lista = df_anomalias.sort_values(by='desviacion', ascending=False).head(150).to_dict(orient='records')
 
     del df
     del model
@@ -114,5 +155,6 @@ def generar_pronostico(parquet_path: str, h: int = 7) -> dict:
     
     return {
         "pronostico": pronostico.to_dict(orient='list'),
-        "catalogo": catalogo
+        "catalogo": catalogo,
+        "anomalias": anomalias_lista
     }

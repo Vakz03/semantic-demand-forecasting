@@ -47,5 +47,12 @@ You can access the interactive Swagger UI at:
 - **Payload**: A raw `.csv` file.
 - **Parameters**: `h` (int) - The number of steps/days to forecast into the future.
 - **Response**: A JSON dictionary containing:
-  - `pronostico`: Forecasted demand values per `unique_id` and `ds`.
-  - `catalogo`: Extracted static product metadata (descriptions, categories) mapped to `unique_id`.
+  - `pronostico`: Forecasted values columnar dictionary:
+    - `unique_id`: Series identifier.
+    - `ds`: Target timestamp.
+    - `LGBMRegressor`: Expected forecast.
+    - `p10`: Lower confidence interval bound (conservative worst-case, truncated at $\ge 0$).
+    - `p90`: Upper confidence interval bound (optimistic high-demand case).
+  - `catalogo`: Extracted static product metadata (descriptions, categories).
+  - `anomalias`: Historical out-of-distribution sales events flagged using weekday residual deviation ($|y - \hat{y}| > 3.5\sigma$).
+
