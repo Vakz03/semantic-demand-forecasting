@@ -1,21 +1,10 @@
-# Demand Forecasting System & Supply Chain Console
+# Demand Forecasting API
 
-A containerized, enterprise-ready B2B application designed for automated demand planning and inventory optimization. The system connects an intelligent backend (FastAPI + Ollama Semantic AI + LightGBM / MLForecast) with a modern, high-density Operations & Logistics web dashboard (React + Vite + Tailwind CSS).
+This repository contains a robust, containerized REST API that performs automated Demand Forecasting. It is designed to be easily deployable in B2B environments where businesses can upload their historical sales data and receive highly accurate, seasonal forecasts.
 
----
+The API implements a fully automated end-to-end data pipeline powered by Semantic AI and advanced Machine Learning.
 
-## Architecture Overview
-
-<<<<<<< HEAD
-The system uses a decoupled architecture with two primary layers:
-
-```
-[ Raw CSV ] ──> [ Frontend SPA (React + Vite) ] ──> [ FastAPI Backend (Docker) ]
-                       │                                      │
-                       │ Pre-inspection (5 rows)             ├─> Semantic Profiling (Ollama Qwen2.5)
-                       │ Inventory KPIs & Charts             ├─> Out-of-core ETL (Polars)
-                       │ CSV Report Export                   └─> Parallel Multi-Series ML (LightGBM)
-```
+## Architecture & Algorithms
 
 ### 1. Semantic Data Profiling (LLM & Schema Cache)
 Instead of forcing users to strictly format their data, this API is intelligent enough to analyze a raw CSV or Parquet file and logically deduce the meaning of each column. 
@@ -24,120 +13,92 @@ Instead of forcing users to strictly format their data, this API is intelligent 
 - When new structures are detected, a local **Large Language Model (LLM)** via `Ollama` acts as a Data Engineer, inferring the correct ontology (e.g., identifying which column represents `TARGET_METRIC`, `TIMESTAMP`, `ITEM_ID`, or `COVARIATE`).
 - We use **Pydantic** and **Instructor** to constrain the LLM's output to strict, deterministic JSON formatting.
 
-### 2. High-Performance ETL (Polars Streaming)
-- Evaluates execution graphs using **Polars LazyFrames** with streaming computation to prevent out-of-memory errors on large datasets.
+### 2. High-Performance ETL (Polars)
+Handling millions of rows requires extreme optimization.
+- The pipeline uses **Polars (LazyFrames)** to perform out-of-core streaming computations. It processes datasets larger than RAM by evaluating execution graphs efficiently.
 - Native ingestion of both `.csv` and `.parquet` files.
-- Applies strict aggregation per `[unique_id, ds]` to prevent non-unique multi-indices in intraday data.
-- Downcasts data types (`Float32`, `Categorical`) to reduce memory consumption by >50%.
+- Automatic **Downcasting** is applied (e.g., converting strings to Categoricals, and `Float64` to `Float32`) to halve the memory footprint.
 
 ### 3. Machine Learning Forecasting (LightGBM & MLForecast)
-- The pipeline dynamically infers the chronological frequency of the data (Hourly, Daily, Weekly, Monthly).
+- The pipeline dynamically infers the chronological frequency of the data (Hourly, Daily, Weekly, or Monthly).
 - Adaptive model hyperparameters automatically adjust based on dataset row volume and series cardinality to avoid overfitting and maximize training throughput.
 - Based on the inferred frequency, it calculates appropriate lagged features (e.g., 7-day, 14-day, and 28-day lags for daily data) to capture deep seasonality.
 - The core algorithm is **LightGBM** (Gradient Boosting), heavily optimized for execution speed and parallelization across CPU cores.
 - Empirical conformal prediction intervals (`p10` and `p90`) provide well-calibrated distribution-free uncertainty bounds with guaranteed non-negative boundaries.
 - When supply chain lead time is specified, the API automatically calculates suggested Safety Stock and Reorder Points (ROP) per SKU.
-- Extracts a complete static catalog (product descriptions, categories) to link raw IDs with human-readable product names in the UI.
-
-### 4. Operations & Logistics Console (Frontend SPA)
-Built with React, Vite, Tailwind CSS v4, Lucide Icons, and Recharts:
-- **Client-side Data Inspector:** Previews the first 5 rows, detects column headers, and validates file size before upload.
-- **Execution Telemetry:** Calibrated progress monitor tracking inference and training time.
-- **SKU Navigator:** Sidebar with real-time text search and rotation filters (*All, High, Intermittent*).
-- **Supply Chain KPI Cards:**
-  - *Projected Total Demand (units)* for the forecast horizon.
-  - *Daily Estimated Consumption (units/day)*.
-  - *Suggested Safety Stock (SS)* calculated using standard deviation buffer for ~95% service level.
-  - *Reorder Point (ROP)* incorporating estimated lead times.
-- **Technical Forecasting Chart:** Composed step/line visualization featuring shaded confidence/dispersion bands (+25%).
-- **Structured Planning Table & CSV Export:** Monospace right-aligned data, logistical action badges (*Stock suficiente*, *Reabastecimiento preventivo*, *Monitoreo pasivo*), and one-click CSV report export.
 
 ## Prerequisites
 
 - **Docker** and **Docker Compose**
-- **Node.js** (v18+) & **npm**
-- **Ollama**: Running locally with the `qwen2.5` model installed:
-  ```bash
-  ollama run qwen2.5
-  ```
+- **Ollama**: Ensure you have an instance of Ollama running on your host machine with the `qwen2.5` model installed (`ollama run qwen2.5`).
 
----
+## Deployment (Docker)
 
-## Quick Start
-
-### 1. Start the Backend API (Docker)
-
-From the project root:
+To deploy the API in a background container:
 
 ```bash
 docker-compose up --build -d
 ```
 
-The REST API will be available at `http://127.0.0.1:8000`. Interactive API documentation is available at `http://127.0.0.1:8000/docs`.
+This will expose the API locally on port `8000`.
 
-### 2. Start the Frontend Dashboard
+## Configuration (Environment Variables)
 
-In a new terminal window:
+The service can be configured via environment variables in `docker-compose.yml` or a `.env` file:
 
-```bash
-cd frontend
-npm install
-npm run dev
-```
+| Variable | Default Value | Description |
+| :--- | :--- | :--- |
+| `ENVIRONMENT` | `development` | Operating environment. When set to `production`, interactive documentation (`/docs`, `/redoc`, `/openapi.json`) is automatically disabled. |
+| `OLLAMA_BASE_URL` | `http://localhost:11434/v1` | Base URL pointing to the Ollama server hosting the local LLM. |
+| `API_KEY` | *(empty)* | Optional secret key for endpoint protection. When specified, requests must supply this key via the `X-API-Key` header. |
+| `ALLOWED_ORIGINS` | *(local addresses)* | Comma-separated list of allowed CORS origins for web integrations (e.g., `http://localhost:5173,http://localhost:3000`). |
 
-Open your browser at **`http://localhost:5173`**.
+## API Usage & Documentation
 
----
+### Interactive Documentation
 
-## API Reference
+The API exposes interactive API documentation interfaces in development mode:
 
-### `POST /predict-demand/`
-- **Method:** `POST` (multipart/form-data)
-- **Parameters:**
-  - `file`: CSV or Parquet file containing historical sales records.
-  - `h` *(optional, default: 7)*: Number of forecast horizons.
-  - `lead_time` *(optional, default: 0)*: Supplier lead time in days to calculate safety stock and reorder point.
-- **Headers:** `X-API-Key` *(optional, if configured)*.
-- **Response Format:**
-  ```json
-  {
-    "pronostico": {
-      "unique_id": ["001_000001", "..."],
-      "ds": ["2023-12-29", "..."],
-      "LGBMRegressor": [14.2, "..."],
-      "p10": [10.5, "..."],
-      "p90": [18.1, "..."]
-    },
-    "catalogo": [
-      {
-        "unique_id": "001_000001",
-        "DES_PROD": "ACEITE 1-2-3 LITRO"
-      }
-    ],
-    "anomalias": [
-      {
-        "unique_id": "001_000001",
-        "ds": "2023-11-15",
-        "venta_real": 95.0,
-        "media_esperada": 12.4,
-        "std": 4.1,
-        "z_score": 20.14
-      }
-    ],
-    "metricas_inventario": {
-      "001_000001": {
-        "lead_time_dias": 7,
-        "consumo_diario_estimado": 14.2,
-        "stock_seguridad_sugerido": 17.85,
-        "punto_reorden_sugerido": 117.25
-      }
-    }
-  }
-  ```
+- **Swagger UI**: [http://localhost:8000/docs](http://localhost:8000/docs)
+- **ReDoc Alternative**: [http://localhost:8000/redoc](http://localhost:8000/redoc)
+- **OpenAPI Schema**: [http://localhost:8000/openapi.json](http://localhost:8000/openapi.json)
 
----
+In `production` mode (`ENVIRONMENT=production`), these documentation endpoints are completely disabled to prevent unintended schema exposure.
+
+### Endpoints
+
+#### `GET /health`
+Verifies service availability and container health status.
+- **Response**: `{"status": "healthy", "service": "demand-forecasting-api"}`
+
+#### `POST /predict-demand/`
+Executes end-to-end dataset profiling, ETL processing, and machine learning demand forecasting.
+
+- **Payload**: A structured `.csv` or `.parquet` file (`multipart/form-data`).
+- **Query Parameters**:
+  - `h` (int, optional, default: `7`, range: `1` to `90`): Number of time steps to forecast into the future.
+  - `lead_time` (int, optional, default: `0`, range: `0` to `180`): Supplier lead time in days for inventory safety stock and reorder point calculation.
+- **Headers**:
+  - `X-API-Key` *(optional, required only if `API_KEY` is configured on the server)*.
+- **Response Format**:
+  - `pronostico`: Forecasted demand per `unique_id` and timestamp `ds` with conformal uncertainty bands (`p10`, `p90`).
+  - `catalogo`: Extracted static product and location metadata (categories, descriptions).
+  - `anomalias`: Historical out-of-distribution sales records flagged by residual deviation analysis.
+  - `metricas_inventario` *(optional, calculated when `lead_time > 0`)*: Suggested safety stock, daily consumption average, and reorder point (ROP) per series.
 
 ## Enterprise Reliability & Security
 
-The service is built following modern enterprise standards, featuring input validation, rate limiting, access control mechanisms, and containerized deployment designed to protect system resources and ensure consistent operation in production environments.
+The service is built following modern enterprise standards, featuring:
+- Non-root container execution (`appuser` UID 1001).
+- Request rate limiting via SlowAPI.
+- Streaming file upload size validation (50 MB limit) with protection against memory exhaustion.
+- Bounded concurrency semaphore limiting simultaneous model training tasks.
+- Sanitized input handling and generic client-side error responses to prevent stack trace disclosure.
+
+## License & Legal Policies
+
+- **License**: Released under the terms of the **MIT License**. See [LICENSE](LICENSE) for details.
+- **Disclaimer**: Use of algorithmic forecasts is subject to the conditions detailed in [DISCLAIMER.md](DISCLAIMER.md).
+
+
 
