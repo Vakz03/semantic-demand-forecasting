@@ -46,4 +46,6 @@ You can access the interactive Swagger UI at:
 ### `POST /predict-demand/`
 - **Payload**: A raw `.csv` file.
 - **Parameters**: `h` (int) - The number of steps/days to forecast into the future.
-- **Response**: A JSON dictionary containing the forecasted values for every identified item/location optimally formatted in columnar arrays.
+- **Response**: A JSON dictionary containing:
+  - `pronostico`: Forecasted demand values per `unique_id` and `ds`.
+  - `catalogo`: Extracted static product metadata (descriptions, categories) mapped to `unique_id`.

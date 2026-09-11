@@ -66,6 +66,11 @@ def generar_pronostico(parquet_path: str, h: int = 7) -> dict:
             df[col] = df[col].ffill().bfill()
             
     todas_covariables = [c for c in df.columns if c not in ['unique_id', 'ds', 'y']]
+    catalogo = []
+    text_cols = [c for c in todas_covariables if df[c].dtype.name in ['category', 'object', 'string']]
+    if text_cols:
+        df_cat = df[['unique_id'] + text_cols].groupby('unique_id').first().reset_index()
+        catalogo = df_cat.to_dict(orient='records')
     
     covariables_estaticas = []
     covariables_dinamicas = []
@@ -100,11 +105,14 @@ def generar_pronostico(parquet_path: str, h: int = 7) -> dict:
     
     if 'LGBMRegressor' in pronostico.columns:
         pronostico['LGBMRegressor'] = pronostico['LGBMRegressor'].clip(lower=0)
-    
+
     del df
     del model
     gc.collect()
     
     pronostico['ds'] = pronostico['ds'].astype(str)
     
-    return {"pronostico": pronostico.to_dict(orient='list')}
+    return {
+        "pronostico": pronostico.to_dict(orient='list'),
+        "catalogo": catalogo
+    }
