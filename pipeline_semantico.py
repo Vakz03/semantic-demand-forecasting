@@ -199,7 +199,7 @@ def procesar_archivo_a_parquet(file_path: str) -> str:
         print(f"Razon: {col.razonamiento}")
         print("-" * 40)
 
-    print("\n--- Transformacion a formato Estandar ---")
+    print("\n--- Transformacion a formato estructurado de series de tiempo ---")
     lf_transformado = transformar_datos(lf, respuesta)
     
     print("Ejecutando pipeline y guardando a disco (esto puede tomar un momento)...")
