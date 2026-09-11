@@ -6,6 +6,7 @@ A containerized, enterprise-ready B2B application designed for automated demand 
 
 ## Architecture Overview
 
+<<<<<<< HEAD
 The system uses a decoupled architecture with two primary layers:
 
 ```
@@ -16,21 +17,26 @@ The system uses a decoupled architecture with two primary layers:
                        │ CSV Report Export                   └─> Parallel Multi-Series ML (LightGBM)
 ```
 
-### 1. Semantic Data Profiling (LLM Layer)
-- Users don't need to conform to fixed column schemas.
-- A local **Large Language Model (Qwen 2.5 via Ollama)** inspects the dataset sample and dynamically maps each column into the pipeline ontology (`TARGET_METRIC`, `TIMESTAMP`, `ITEM_ID`, `LOCATION_ID`, `COVARIATE`, or `IGNORED`).
-- Pydantic and **Instructor** enforce strict, deterministic JSON generation.
+### 1. Semantic Data Profiling (LLM & Schema Cache)
+Instead of forcing users to strictly format their data, this API is intelligent enough to analyze a raw CSV or Parquet file and logically deduce the meaning of each column. 
+- The system reads a sample of the uploaded dataset and extracts its metadata profile.
+- An in-memory cryptographic cache (SHA-256 schema signature) recognizes previously uploaded structures instantly, bypassing the LLM on recurrent pipelines.
+- When new structures are detected, a local **Large Language Model (LLM)** via `Ollama` acts as a Data Engineer, inferring the correct ontology (e.g., identifying which column represents `TARGET_METRIC`, `TIMESTAMP`, `ITEM_ID`, or `COVARIATE`).
+- We use **Pydantic** and **Instructor** to constrain the LLM's output to strict, deterministic JSON formatting.
 
 ### 2. High-Performance ETL (Polars Streaming)
 - Evaluates execution graphs using **Polars LazyFrames** with streaming computation to prevent out-of-memory errors on large datasets.
+- Native ingestion of both `.csv` and `.parquet` files.
 - Applies strict aggregation per `[unique_id, ds]` to prevent non-unique multi-indices in intraday data.
 - Downcasts data types (`Float32`, `Categorical`) to reduce memory consumption by >50%.
 
 ### 3. Machine Learning Forecasting (LightGBM & MLForecast)
-- Autonomously detects dataset frequency (Hourly, Daily, Weekly, Monthly) via dynamic frequency inference.
-- Applies dynamic lags (e.g., 7, 14, 28 for daily series) to model seasonality.
-- Employs **LightGBM** multi-threading across CPU cores.
-- Truncates non-physical negative demand predictions at zero (`clip(lower=0)`).
+- The pipeline dynamically infers the chronological frequency of the data (Hourly, Daily, Weekly, Monthly).
+- Adaptive model hyperparameters automatically adjust based on dataset row volume and series cardinality to avoid overfitting and maximize training throughput.
+- Based on the inferred frequency, it calculates appropriate lagged features (e.g., 7-day, 14-day, and 28-day lags for daily data) to capture deep seasonality.
+- The core algorithm is **LightGBM** (Gradient Boosting), heavily optimized for execution speed and parallelization across CPU cores.
+- Empirical conformal prediction intervals (`p10` and `p90`) provide well-calibrated distribution-free uncertainty bounds with guaranteed non-negative boundaries.
+- When supply chain lead time is specified, the API automatically calculates suggested Safety Stock and Reorder Points (ROP) per SKU.
 - Extracts a complete static catalog (product descriptions, categories) to link raw IDs with human-readable product names in the UI.
 
 ### 4. Operations & Logistics Console (Frontend SPA)
@@ -45,8 +51,6 @@ Built with React, Vite, Tailwind CSS v4, Lucide Icons, and Recharts:
   - *Reorder Point (ROP)* incorporating estimated lead times.
 - **Technical Forecasting Chart:** Composed step/line visualization featuring shaded confidence/dispersion bands (+25%).
 - **Structured Planning Table & CSV Export:** Monospace right-aligned data, logistical action badges (*Stock suficiente*, *Reabastecimiento preventivo*, *Monitoreo pasivo*), and one-click CSV report export.
-
----
 
 ## Prerequisites
 
@@ -90,8 +94,9 @@ Open your browser at **`http://localhost:5173`**.
 ### `POST /predict-demand/`
 - **Method:** `POST` (multipart/form-data)
 - **Parameters:**
-  - `file`: CSV file containing historical sales records.
+  - `file`: CSV or Parquet file containing historical sales records.
   - `h` *(optional, default: 7)*: Number of forecast horizons.
+  - `lead_time` *(optional, default: 0)*: Supplier lead time in days to calculate safety stock and reorder point.
 - **Headers:** `X-API-Key` *(optional, if configured)*.
 - **Response Format:**
   ```json
@@ -118,7 +123,15 @@ Open your browser at **`http://localhost:5173`**.
         "std": 4.1,
         "z_score": 20.14
       }
-    ]
+    ],
+    "metricas_inventario": {
+      "001_000001": {
+        "lead_time_dias": 7,
+        "consumo_diario_estimado": 14.2,
+        "stock_seguridad_sugerido": 17.85,
+        "punto_reorden_sugerido": 117.25
+      }
+    }
   }
   ```
 
